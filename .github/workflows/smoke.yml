@@ -1,0 +1,63 @@
+name: Verify native macOS release ZIP handoff
+
+on:
+  push:
+    branches: [codex/verify-native-macos-zip-handoff]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    steps:
+      - name: Create the macOS ZIP fixture
+        env:
+          ZIP_PATH: build/${{ runner.os }}-artifacts.zip
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from zipfile import ZipFile, ZipInfo
+
+          path = Path(os.environ["ZIP_PATH"])
+          assert path.name == "macOS-artifacts.zip", path
+          path.parent.mkdir(parents=True, exist_ok=True)
+          with ZipFile(path, "w") as fixture:
+              entry = ZipInfo("fixture.txt")
+              entry.create_system = 3
+              fixture.writestr(entry, b"libavif release transfer fixture\n")
+          PY
+      - name: Upload ZIP for release publication
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macOS-artifacts
+          path: build/${{ runner.os }}-artifacts.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download ZIP for release publication
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macOS-artifacts
+          path: release-assets
+      - name: Confirm the ZIP is byte-for-byte identical
+        run: |
+          python3 - <<'PY'
+          import io
+          from pathlib import Path
+          from zipfile import ZipFile, ZipInfo
+
+          expected = io.BytesIO()
+          with ZipFile(expected, "w") as fixture:
+              entry = ZipInfo("fixture.txt")
+              entry.create_system = 3
+              fixture.writestr(entry, b"libavif release transfer fixture\n")
+          path = Path("release-assets/macOS-artifacts.zip")
+          assert path.read_bytes() == expected.getvalue(), path
+          print(f"Verified the unchanged ZIP at {path}")
+          PY
