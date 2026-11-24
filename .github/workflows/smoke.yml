@@ -1,0 +1,83 @@
+name: Verify release publisher ZIP paths
+
+on:
+  push:
+    branches: [codex/verify-release-zip-paths]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            name: linux-artifacts
+            path: build/linux-artifacts.zip
+          - runner: ubuntu-latest
+            name: macOS-artifacts
+            path: build/macOS-artifacts.zip
+          - runner: ubuntu-latest
+            name: windows-artifacts
+            path: build/Release/windows-artifacts.zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Create a deterministic ZIP fixture
+        shell: bash
+        env:
+          ZIP_PATH: ${{ matrix.path }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from zipfile import ZipFile, ZipInfo
+
+          path = Path(os.environ["ZIP_PATH"])
+          path.parent.mkdir(parents=True, exist_ok=True)
+          with ZipFile(path, "w") as fixture:
+              entry = ZipInfo("fixture.txt")
+              entry.create_system = 3
+              fixture.writestr(entry, b"libavif release transfer fixture\n")
+          PY
+      - name: Upload ZIP for release publication
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error
+          compression-level: 0
+
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [linux-artifacts, macOS-artifacts, windows-artifacts]
+    steps:
+      - name: Download ZIP for release publication
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ matrix.name }}
+          path: release-assets
+      - name: Confirm the ZIP is byte-for-byte identical
+        env:
+          ARTIFACT_NAME: ${{ matrix.name }}
+        run: |
+          python - <<'PY'
+          import io
+          import os
+          from pathlib import Path
+          from zipfile import ZipFile, ZipInfo
+
+          expected = io.BytesIO()
+          with ZipFile(expected, "w") as fixture:
+              entry = ZipInfo("fixture.txt")
+              entry.create_system = 3
+              fixture.writestr(entry, b"libavif release transfer fixture\n")
+          downloaded = Path("release-assets", os.environ["ARTIFACT_NAME"] + ".zip")
+          assert downloaded.read_bytes() == expected.getvalue(), downloaded
+          print(f"Verified the unchanged ZIP at {downloaded}")
+          PY
